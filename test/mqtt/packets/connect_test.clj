@@ -381,4 +381,79 @@
         (is (= "user0123456789" (:username decoded))))
 
       (testing "should have a password"
-        (is (= "pass0123456789" (:password decoded)))))))
+        (is (= "pass0123456789" (:password decoded))))))
+
+  (testing "when parsing a 3.1.1 Connect packet"
+    (let [decoder (make-decoder)
+          packet  (bytes-to-byte-buffer 0x10 0x14 0x00 0x04 "MQTT" 0x04 0x00 0x00 0x0a 0x00 0x08 "myclient")
+          out     (new java.util.ArrayList)
+          _       (.decode decoder nil packet out)
+          decoded (first out)]
+
+      (testing "parses a packet"
+        (is (not (nil? decoded)))
+        (is (= :connect (:type decoded))))
+
+      (testing "should not be a duplicate"
+        (is (= false (:dup decoded))))
+
+      (testing "parses the qos"
+        (is (= 0 (:qos decoded))))
+
+      (testing "should not be retained"
+        (is (= false (:retain decoded))))
+
+      (testing "parses the protocol version"
+        (is (= 4 (:protocol-version decoded))))
+
+      (testing "parses the protocol name"
+        (is (= "MQTT" (:protocol-name decoded))))
+
+      (testing "parses the client id"
+        (is (= "myclient" (:client-id decoded))))
+
+      (testing "parses the keepalive timer"
+        (is (= 10 (:keepalive decoded))))
+
+      (testing "should not have clean session set"
+        (is (= false (:clean-session decoded))))
+
+      (testing "should not have a username"
+        (is (nil? (:username decoded))))
+
+      (testing "should not have a password"
+        (is (nil? (:password decoded))))))
+
+  (testing "when parsing a Connect packet with an invalid protocol string"
+    (let [decoder (make-decoder)
+          packet  (bytes-to-byte-buffer 0x10 0x14 0x00 0x04 "JUNK" 0x04 0x00 0x00 0x0a 0x00 0x08 "myclient")
+          out     (new java.util.ArrayList)
+          {:keys [sent flushed closed ctx]} (stub-context)
+          _       (.decode decoder ctx packet out)
+          decoded (first out)]
+
+      (testing "it sends a connack with invalid protocol version"
+        (is (= 1 @flushed))
+        (is (= (first @sent)
+               {:type :connack
+                :return-code :unacceptable-protocol-version})))
+
+      (testing "it closes the socket"
+        (is @closed))))
+
+  (testing "when parsing a Connect packet with an invalid protocol number"
+    (let [decoder (make-decoder)
+          packet  (bytes-to-byte-buffer 0x10 0x14 0x00 0x04 "MQTT" 0xFF 0x00 0x00 0x0a 0x00 0x08 "myclient")
+          out     (new java.util.ArrayList)
+          {:keys [sent flushed closed ctx]} (stub-context)
+          _       (.decode decoder ctx packet out)
+          decoded (first out)]
+
+      (testing "it sends a connack with invalid protocol version"
+        (is (= 1 @flushed))
+        (is (= (first @sent)
+               {:type :connack,
+                :return-code :unacceptable-protocol-version})))
+
+      (testing "it closes the socket"
+        (is @closed)))))

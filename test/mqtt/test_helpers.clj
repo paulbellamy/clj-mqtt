@@ -1,7 +1,7 @@
 (ns mqtt.test-helpers
   (:import [java.nio ByteBuffer]
            [io.netty.buffer Unpooled ByteBuf]
-           [io.netty.channel DefaultChannelHandlerContext]))
+           [io.netty.channel ChannelHandlerContext]))
 
 (defn unsigned-byte
   "Cast to unsigned byte.
@@ -54,3 +54,16 @@
   will modify the buffer."
   ^String [^ByteBuf buffer]
   (String. (byte-buffer-to-byte-array buffer) "UTF-8"))
+
+(defn stub-context
+  []
+  (let [sent    (atom [])
+        flushed (atom 0)
+        closed  (atom false)]
+    {:sent sent
+     :flushed flushed
+     :closed closed
+     :ctx (reify ChannelHandlerContext
+            (write [_ msg] (swap! sent conj msg))
+            (flush [_] (reset! flushed (count @sent)))
+            (close [_] (reset! closed true)))}))
