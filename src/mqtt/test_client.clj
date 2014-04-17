@@ -1,15 +1,17 @@
 (ns mqtt.test-client
   (:require [clojure.core.async :as async]
-            [mqtt.codec :as codec])
+            [mqtt.codec :as codec]
+            [mqtt.test-client.websockets :as ws])
   (:import [com.xively.netty Netty]
            [io.netty.bootstrap Bootstrap]
            [io.netty.channel Channel SimpleChannelInboundHandler ChannelInitializer ChannelHandler ChannelHandlerContext ChannelFuture ChannelPipeline]
            [io.netty.channel.nio NioEventLoopGroup]
            [io.netty.channel.socket.nio NioSocketChannel]
+           [io.netty.handler.codec.http HttpClientCodec HttpObjectAggregator]
            [java.net InetSocketAddress]))
 
-(def ^:dynamic *default-host* "localhost")
-(def ^:dynamic *default-port* 1883)
+
+(def ^:dynamic *default-uri* "tcp://localhost:1883")
 
 (defn- consume
   "Consume messages from a given channel calling f on evey message"
@@ -47,18 +49,33 @@
       (throw cause))))
 
 (defn- gen-channel-initializer
-  [sock ^ChannelHandler handler]
+  [sock ^ChannelHandler uri handler]
   (proxy [ChannelInitializer] []
     (initChannel [^Channel ch]
       (reset! (:channel sock) ch)
       (start-sender sock ch)
-      (doto (Netty/pipeline ch)
-        (.addLast "codec" ^ChannelHandler (codec/make-codec))
-        (.addLast "handler" handler)))))
+      (case (.getScheme uri)
+        "ws"
+        (doto (Netty/pipeline ch)
+          (.addLast "http-codec" (HttpClientCodec.))
+          (.addLast "aggregator" (HttpObjectAggregator. 8192))
+          (.addLast "websockets" (ws/websocket-client-handler uri))
+          (.addLast "codec" ^ChannelHandler (codec/make-codec))
+          (.addLast "handler" handler))
+
+        "tcp"
+        (doto (Netty/pipeline ch)
+          (.addLast "codec" ^ChannelHandler (codec/make-codec))
+          (.addLast "handler" handler))
+
+        "mqtt"
+        (doto (Netty/pipeline ch)
+          (.addLast "codec" ^ChannelHandler (codec/make-codec))
+          (.addLast "handler" handler))))))
 
 (defn socket
   "Creates and connects a raw mqtt socket to the address. Returns two chans an input one and an output one."
-  ([] (socket (str "tcp://" *default-host* ":" *default-port*)))
+  ([] (socket *default-uri*))
   ([addr]
      (let [uri (java.net.URI. addr)
            subscriptions (atom {})
@@ -72,7 +89,7 @@
            bootstrap (Bootstrap.)]
        (Netty/group bootstrap (NioEventLoopGroup.))
        (Netty/clientChannel bootstrap NioSocketChannel)
-       (Netty/handler bootstrap (gen-channel-initializer sock (gen-response-handler sock)))
+       (Netty/handler bootstrap (gen-channel-initializer sock uri (gen-response-handler sock)))
 
        (assoc sock :future (-> (.connect bootstrap (.getHost uri) (.getPort uri))
                                (.await))))))
@@ -239,15 +256,11 @@
 
 (defmacro with-client
   [[client opts] & body]
-  `(let [defaults# {:protocol "tcp"
-                    :host *default-host*
-                    :port *default-port*}
-         opts# (merge defaults# ~opts)
-         addr# (format "%s://%s:%s" (:protocol opts#) (:host opts#) (:port opts#))
-         opts# (dissoc opts# :protocol :host :port)
-         ~client (socket addr#)]
+  `(let [opts# ~opts
+         ~client (socket (or (:uri opts#)
+                             *default-uri*))]
      (try
-       (connect ~client opts#)
+       (connect ~client (dissoc opts# :uri))
        ~@body
        (finally
          (close ~client)))))
