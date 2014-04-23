@@ -3,7 +3,7 @@
             [mqtt.codec :as codec])
   (:import [com.xively.netty Netty]
            [io.netty.bootstrap Bootstrap]
-           [io.netty.channel Channel SimpleChannelInboundHandler ChannelInitializer ChannelHandler ChannelHandlerContext ChannelFuture ChannelPipeline]
+           [io.netty.channel Channel ChannelOption SimpleChannelInboundHandler ChannelInitializer ChannelHandler ChannelHandlerContext ChannelFuture ChannelPipeline]
            [io.netty.channel.nio NioEventLoopGroup]
            [io.netty.channel.socket.nio NioSocketChannel]
            [java.net InetSocketAddress]))
@@ -59,7 +59,8 @@
 (defn socket
   "Creates and connects a raw mqtt socket to the address. Returns two chans an input one and an output one."
   ([] (socket (str "tcp://" *default-host* ":" *default-port*)))
-  ([addr]
+  ([addr & {:keys [timeout]
+            :or {timeout 1000}}]
      (let [uri (java.net.URI. addr)
            subscriptions (atom {})
            sock {:in (async/chan)
@@ -70,6 +71,7 @@
                  :client-id (atom nil)
                  :channel (atom nil)}
            bootstrap (Bootstrap.)]
+       (.option bootstrap (ChannelOption/CONNECT_TIMEOUT_MILLIS timeout))
        (Netty/group bootstrap (NioEventLoopGroup.))
        (Netty/clientChannel bootstrap NioSocketChannel)
        (Netty/handler bootstrap (gen-channel-initializer sock (gen-response-handler sock)))
